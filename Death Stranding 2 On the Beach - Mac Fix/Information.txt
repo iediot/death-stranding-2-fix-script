@@ -1,0 +1,11 @@
+Information:
+
+This patch may break with additional patches from Nixxies.
+
+Credit:
+
+David — david.akhmedbayev@icloud.com 
+Release Notes:
+
+Version 1 - Added ability to force HDR.
+Version 0 - Fixed DS2 not launching. 
