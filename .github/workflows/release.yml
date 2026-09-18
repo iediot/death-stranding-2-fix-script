@@ -1,0 +1,85 @@
+name: Release
+
+# Fires on a version tag you push yourself:
+#   git tag -a v2.0.0 -m "v1.10.89.0 support"
+#   git push mine v2.0.0
+#
+# Or run it by hand from the Actions tab, which validates and uploads the
+# archive as a build artifact without publishing a release.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Byte-compile patchers
+        run: |
+          set -euo pipefail
+          for f in "Death Stranding 2 On the Beach - Mac Fix/Patcher/Version "*/ds2.py; do
+            echo "compiling $f"
+            python3 -m py_compile "$f"
+          done
+
+      - name: Validate patch tables
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/validate_patches.py \
+            "Death Stranding 2 On the Beach - Mac Fix/Patcher/Version "*/ds2.py
+
+      - name: Build archive
+        id: build
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="manual-$(date -u +%Y%m%d-%H%M%S)"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          NAME="DS2-Fix-${TAG}.zip"
+
+          find . -name '.DS_Store' -delete
+          find . -name '__pycache__' -type d -prune -exec rm -rf {} +
+          rm -rf __MACOSX
+
+          zip -r "$NAME" \
+            "Death Stranding 2 On the Beach - Mac Fix" \
+            README.md \
+            -x '*.DS_Store' '__MACOSX/*' '*__pycache__/*' '*.pyc' '*ds2_disasm.txt'
+
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG"   >> "$GITHUB_OUTPUT"
+          echo "--- archive contents ---"
+          unzip -l "$NAME"
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.build.outputs.tag }}" \
+            "${{ steps.build.outputs.name }}" \
+            --title "${{ steps.build.outputs.tag }}" \
+            --generate-notes
+
+      - name: Upload artifact
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: DS2-Fix
+          path: ${{ steps.build.outputs.name }}

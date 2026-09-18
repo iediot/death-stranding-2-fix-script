@@ -1,3 +1,5 @@
 .DS_Store
 __MACOSX/
 ds2_disasm.txt
+__pycache__/
+*.pyc
