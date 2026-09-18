@@ -1,6 +1,6 @@
 <div align="center">
 
-***DS2 Mac Fix***
+# DS2 Mac Fix
 
 **Death Stranding 2: On The Beach, running on Apple Silicon through CrossOver**
 
@@ -9,8 +9,6 @@
 ![License](https://img.shields.io/badge/License-MIT-green?style=flat-sqircle)
 
 </div>
-
----
 
 ## Why
 
