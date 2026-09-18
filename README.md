@@ -6,8 +6,6 @@
 
 ![Python](https://img.shields.io/badge/Python-3-3776AB?style=flat-sqircle&logo=python&logoColor=white)
 ![macOS](https://img.shields.io/badge/macOS-000000?style=flat-sqircle&logo=apple&logoColor=white)
-![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-000000?style=flat-sqircle&logo=apple&logoColor=white)
-![CrossOver](https://img.shields.io/badge/CrossOver-26-1E6FBA?style=flat-sqircle)
 ![License](https://img.shields.io/badge/License-MIT-green?style=flat-sqircle)
 
 </div>
