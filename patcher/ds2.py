@@ -80,6 +80,24 @@ Neither required feature is needed for rendering. Tearing support is only
 used for variable refresh rate / low-latency present modes; depth bounds
 test is a minor optimization for deferred lighting passes.
 
+Re-deriving these patterns after a future game update (needs capstone + pefile):
+  1. Anchor on the assertion strings. Decima's check macros embed the literal
+     source expression, so .rdata holds strings like
+       "mDXGIFactory->CheckFeatureSupport(DXGI_FEATURE_PRESENT_ALLOW_TEARING,
+        &allow_tearing, sizeof(allow_tearing))"
+  2. Find the code reference: scan .text for RIP-relative LEA (REX + 8D, modrm
+     mod=00 rm=101) resolving to those addresses. Each anchor has exactly one.
+  3. Get real function bounds from .pdata - an array of 12-byte
+     RUNTIME_FUNCTION { Begin, End, UnwindInfo } RVAs. Binary-search for the
+     entry containing the xref. Skipping this means linear disassembly starts
+     mid-instruction and desynchronizes.
+  4. Disassemble and locate the calls by vtable offset (+0xE0 on IDXGIFactory5,
+     +0x68 on ID3D12Device), cross-checked against the feature id in edx.
+  5. Find the guard: the `cmp dword ptr [rsp+disp], r15d` after the call and the
+     jump following it. Confirm the target reaches the teardown block, and that
+     r15 is really zero at that point.
+  6. Check uniqueness across the whole image before trusting the pattern.
+
 Usage:
   python3 ds2.py [path_to_DS2.exe]
   python3 ds2.py --dry-run [path_to_DS2.exe]

@@ -10,99 +10,24 @@
 
 </div>
 
-## Why
+DS2's Decima engine hard-requires two D3D12 features that Apple's D3DMetal doesn't report,
+and bails out of renderer init with no fallback. This patches out the two aborts — three
+bytes, nothing else. Game builds **v1.0.49.0** and **v1.10.89.0**, auto-detected.
 
-DS2 refuses to start under CrossOver. Not a crash, not a black screen — the renderer
-declines to initialize at all:
+## 1. Bottle
 
-```
-Error initializing rendering configuration, check video card and drivers
-```
+All three have to be right before the patch is even the problem.
 
-**That message has at least three unrelated causes, and only the third one is what this
-patch fixes.** This is the trap: you fix a real problem, relaunch, and get the identical
-error back, so it looks like nothing you did worked.
-
-| The error means | When | Fix |
+| | Value | Why |
 |---|---|---|
-| The bottle is on **DXVK** | CrossOver's default backend. It does not do DX12 properly on Apple Silicon | Switch the bottle to D3DMetal |
-| **D3DMetal isn't engaging** | Launched from Finder or an app shortcut. The crash log names the adapter `VirtualApple` instead of your real GPU | Launch via `cxstart` with the backend set explicitly |
-| **The engine's own feature checks fail** | Everything above is correct and the log names your real GPU | This patch |
+| Graphics backend | `D3DMetal` | CrossOver defaults to **DXVK**, which doesn't do DX12 properly here |
+| Env var | `ROSETTA_ADVERTISE_AVX=1` | Rosetta hides AVX/F16C CPUID bits from translated x86 apps |
+| Game build | `v1.10.89.0`+ | Earlier builds have a CPU-detection bug affecting Nixxes ports generally |
 
-Nor is it the first error you meet. Before the renderer even gets that far you can hit a
-false "VC++ Redistributable required" dialog, an F16C instruction complaint that is really
-Rosetta hiding CPUID flags, and a Shader Model 6.6 warning — none of which the patch
-touches. [Bottle setup](#bottle-setup) covers what has to be true first;
-[Errors on the way](#errors-on-the-way) walks the whole chain in order.
+Use a dedicated bottle — don't share one across DirectX eras, CrossOver's per-app profiles
+will fight each other.
 
-### The part that needs patching
-
-Once the bottle is right, the failure is in the game. During init the Decima engine asks
-the driver for two capabilities and treats both answers as pass-or-fail. Apple's D3DMetal
-translation layer says no to both:
-
-| Capability | D3DMetal reports | Why it says no |
-|---|---|---|
-| `DXGI_FEATURE_PRESENT_ALLOW_TEARING` | `0` | macOS handles vsync itself; there is no tearing present mode to expose |
-| `D3D12_FEATURE_DATA_D3D12_OPTIONS2.DepthBoundsTestSupported` | `FALSE` | no Metal equivalent |
-
-Horizon Zero Dawn Remastered runs on the same engine and works fine, because it has
-fallback paths for both. DS2 has none — either check failing tears down the renderer and
-exits.
-
-Neither capability is needed to draw a frame. Tearing only matters for variable refresh
-rate and low-latency present modes; depth bounds test is a deferred-lighting optimization
-the engine already knows how to live without. This patch stops the engine treating their
-absence as fatal — it does **not** lie to it about what the GPU can do.
-
-## What it patches
-
-Three bytes. Two conditional jumps in the renderer init routine.
-
-| Patch | Instruction change | Required |
-|---|---|---|
-| **ALLOW_TEARING** | `je <fatal>` → `nop nop` | yes |
-| **OPTIONS2 DepthBounds** | `jne <continue>` → `jmp <continue>` | yes |
-| **Force HDR** | colorspace table `is_hdr` flag `0` → `1` | optional |
-
-The optional HDR patch exists because D3DMetal reports an SDR color space to DS2 even on
-HDR-capable displays. Skip it unless your display is actually HDR.
-
-## Supported builds
-
-`patcher/ds2.py` is the only script you need. It handles both known builds — it reads
-`FileVersion` from the PE version resource, picks the matching pattern set, and falls back
-to byte-signature detection if the resource is unreadable.
-
-| Game build | Status | Notes |
-|---|---|---|
-| v1.0.49.0 | supported | original upstream patterns |
-| v1.10.89.0 | supported | re-derived for this fork |
-
-```
-patcher/
-├── ds2.py                  # use this one
-└── legacy/
-    └── ds2-1.0.49.0.py     # upstream v1.0.49.0-only patcher, kept for reference
-```
-
-## Bottle setup
-
-The patch fixes one specific failure. It will not help if any of these are wrong, and each
-one produces its own misleading error first.
-
-| Setting | Value | Why |
-|---|---|---|
-| **Graphics backend** | `D3DMetal` | CrossOver defaults to **DXVK**, which does not do DX12 properly on Apple Silicon. On DXVK you get the renderer-init error and no patch will fix it |
-| **Environment variable** | `ROSETTA_ADVERTISE_AVX=1` | Rosetta hides the AVX/F16C CPUID bits from translated x86 apps by default |
-| **Game build** | `v1.10.89.0` or later | The pre-update builds carry a Nixxes-wide CPU-detection bug |
-
-Use a dedicated bottle, and launch the same way every time — see [Launching](#launching).
-D3DMetal does not always engage when the game is started from a Finder double-click or a
-CrossOver app shortcut, and when it doesn't, the adapter comes back as `VirtualApple` and
-you are back at the renderer-init error with a correctly patched executable.
-
-## Usage
+## 2. Patch
 
 ```bash
 python3 patcher/ds2.py --dry-run "/path/to/DS2.exe"    # report only, writes nothing
@@ -110,101 +35,16 @@ python3 patcher/ds2.py "/path/to/DS2.exe"              # patch
 python3 patcher/ds2.py --restore "/path/to/DS2.exe"    # undo
 ```
 
-Standard library only — nothing to install.
+Standard library only. Writes `DS2.exe.backup` before the first change and never overwrites
+it; nothing is committed unless every required patch resolves. Answer `n` to the HDR prompt
+unless your display is genuinely HDR. Verify with `cmp -l DS2.exe.backup DS2.exe | wc -l` →
+`3`, or `4` with HDR.
 
-Pass the path explicitly unless your install is in a default Steam location. `DS2.exe.backup`
-is written before the first change and never overwritten. Nothing is committed to disk until
-every required patch resolves, so a failed run leaves the executable untouched. Re-running on
-an already-patched exe reports `Already patched` and exits.
+## 3. Launch
 
-You are prompted once about HDR. Answer `n` unless you mean it.
-
-## How it works
-
-Both checks live in the renderer init function at `0x1420CF6D0..0x1420D03AE`, and both
-failure branches converge on one block:
-
-```asm
-0x1420CFFF9   call 0x1420D2D70    ; release the COM objects created so far
-0x1420CFFFE   xor  dil, dil       ; return false
-0x1420D0001   jmp  0x1420D0362    ; -> epilogue: movzx eax, dil ; ret
-```
-
-`r15` is zeroed at `0x1420CF78E` and never written again, so every `cmp ..., r15d` below is
-a comparison against zero.
-
-**ALLOW_TEARING** — `IDXGIFactory5::CheckFeatureSupport`, vtable index 28:
-
-```asm
-lea  r8, [rsp+0x3C]              ; &allow_tearing
-mov  dword ptr [rsp+0x3C], r15d  ; pre-zero the output
-mov  r9d, 4                      ; sizeof(BOOL)
-xor  edx, edx                    ; DXGI_FEATURE_PRESENT_ALLOW_TEARING = 0
-call qword ptr [rax+0xE0]
-cmp  dword ptr [rsp+0x3C], r15d  ; unsupported?
-je   0x1420CFFF9                 ; -> fatal          << patched to nop nop
-```
-
-**OPTIONS2** — `ID3D12Device::CheckFeatureSupport`, vtable index 13:
-
-```asm
-lea  r8, [rsp+0x40]              ; &options2
-mov  qword ptr [rsp+0x40], r15   ; pre-zero both fields
-mov  r9d, 8                      ; sizeof(D3D12_FEATURE_DATA_D3D12_OPTIONS2)
-mov  edx, 0x12                   ; D3D12_FEATURE_D3D12_OPTIONS2 = 18
-call qword ptr [rax+0x68]
-cmp  dword ptr [rsp+0x40], r15d  ; DepthBoundsTestSupported == 0?
-jne  0x1420D0006                 ; supported -> continue   << patched to jmp
-                                 ; falls through to fatal
-```
-
-### What is deliberately left alone
-
-There is a **second** `D3D12_OPTIONS2` query in the same function, at `0x1420CFD44`. It is
-not patched, and that is the point:
-
-```asm
-cmp   dword ptr [rsp+0x58], r15d
-setne byte ptr [rip+0x43111D0]   ; -> global capability flag
-```
-
-It records the real answer in a global flag instead of branching to the failure block — it
-is already a graceful fallback. Leaving it untouched means the engine still knows depth
-bounds is unavailable and stays on its fallback lighting path. Patching it would advertise
-hardware support that isn't there, which is how you get corruption rather than a fix.
-
-The same logic applies to tearing: the variable still reads `0` afterwards. Only the abort
-is removed.
-
-### Patterns (v1.10.89.0)
-
-| Patch | Search | Replace | Offset |
-|---|---|---|---|
-| ALLOW_TEARING | `44397C243C746D` | `44397C243C9090` | `0x20CF385` |
-| OPTIONS2 | `44397C2440750D` | `44397C2440EB0D` | `0x20CF3F2` |
-| HDR | `C645E000C745E801000000` | `C645E001C745E801000000` | `0xCF8AF5` |
-
-All three are unique across the full 117 MB image. The patcher checks uniqueness and
-**refuses to patch an ambiguous match** rather than taking the first hit.
-
-### Why the old pattern broke
-
-Only ALLOW_TEARING changed between builds. The compiler moved the fatal branch from a near
-jump to a short one:
-
-```
-v1.0.49.0    44 39 7C 24 3C   0F 84 F8 00 00 00     je rel32
-v1.10.89.0   44 39 7C 24 3C   74 6D                 je rel8
-```
-
-OPTIONS2 is byte-identical in both. Because the upstream tool aborts when any required
-pattern misses, the whole run failed over one of two patches.
-
-## Launching
-
-Right-click → Open With → CrossOver opens the GUI first, and Finder double-clicks and app
-shortcuts are the launch paths where D3DMetal sometimes fails to engage. Go straight to the
-game instead, and set the backend explicitly rather than trusting the bottle default:
+From the command line, not Finder. D3DMetal doesn't reliably engage on a double-click or an
+app shortcut, and when it doesn't you get the renderer error back with a correctly patched
+executable.
 
 ```bash
 CX_GRAPHICS_BACKEND=d3dmetal D3DM_ENABLE_METALFX=1 DXMT_ENABLE_NVEXT=0 \
@@ -212,159 +52,81 @@ CX_GRAPHICS_BACKEND=d3dmetal D3DM_ENABLE_METALFX=1 DXMT_ENABLE_NVEXT=0 \
   --bottle YOUR_BOTTLE "C:\Program Files (x86)\DEATH STRANDING 2 ON THE BEACH\DS2.exe"
 ```
 
-| Variable | Effect |
+`CX_GRAPHICS_BACKEND` is the one that matters. `D3DM_ENABLE_METALFX` allows MetalFX
+upscaling; `DXMT_ENABLE_NVEXT=0` hides the NVIDIA interposer so the game stops offering DLSS
+it can't run. Add `--workdir "C:\...\ON THE BEACH"` if DLL loading fails, or
+`--desktop name,1280x800` for a fixed-size virtual desktop. In Automator or Shortcuts use the
+absolute path — those don't inherit your shell `PATH`.
+
+## If it still crashes
+
+Three different problems print the *same* renderer message. **The adapter name in the crash
+log tells them apart:** `VirtualApple` means D3DMetal isn't engaging and the patch is not
+your problem.
+
+| Error | What it actually is |
 |---|---|
-| `CX_GRAPHICS_BACKEND=d3dmetal` | Force D3DMetal for this launch. The one that stops the adapter coming back as `VirtualApple` |
-| `D3DM_ENABLE_METALFX=1` | Allow MetalFX upscaling |
-| `DXMT_ENABLE_NVEXT=0` | Hide the NVIDIA extension interposer, so the game stops offering DLSS it cannot run |
+| "VC++ 2015-2022 Redistributable required" | Red herring — the redist is fine. It's what the game shows when early init fails for any reason |
+| `Error initializing rendering configuration` | Bottle is on DXVK → step 1 |
+| …same message, adapter logged as `VirtualApple` | D3DMetal isn't engaging → step 3 |
+| …same message, adapter logged as your real GPU | The real one → step 2 |
+| "Shader Model 6.6 not detected. Current GPU: Apple M5 Pro" | Progress — D3DMetal is engaging and seeing the real GPU. Fixed by the game update |
+| "requires a CPU that supports F16C instructions" | Rosetta hiding CPUID flags → the env var, then the game update |
 
-| Flag | Effect |
+Once it runs: water not rendering and sprites stretched into the sky are D3DMetal
+translucency-path bugs, not the patch (cycling **Translucency Quality** sometimes routes
+around it). The "recommend newer drivers (595.79)" notice and `unhandled support query 9` are
+both benign. Low FPS at startup is the shader cache warming. Game updates revert the patch —
+just re-run it.
+
+## Performance
+
+| Do | Why |
 |---|---|
-| `--no-wait` | return immediately instead of blocking |
-| `--wait-children` | block until the game and its children exit |
-| `--workdir "C:\...\DEATH STRANDING 2 ON THE BEACH"` | set working directory if DLL loading fails |
-| `--desktop name,1280x800` | run in a fixed-size virtual desktop |
+| **Turn off High Resolution / Retina mode** | By far the biggest factor. At 192 DPI a 1920×1200 window is backed by 3840×2400 real pixels — 4× what you selected. It's also why the resolution dropdown won't go below 1920 |
+| **Enable MSync** | Wine's sync primitives are worth a large multiple in threaded games |
+| **Cap fps with VSync** | The refresh selector is often locked, so the divisors are your cap: On/Half/Third = 120/60/40 on a 120 Hz panel. Half is usually right — throttling takes back whatever tuning gained you |
+| **FSR, not DLSS** | DLSS in the list is a `sl.interposer.dll` artifact. It needs Tensor cores, with no software fallback. Same for frame gen: FidelityFX works, NVIDIA's can't |
+| **Give the shader cache time** | Per-bottle and starts empty; settings changes invalidate variants. The first fifteen minutes in an area aren't representative |
 
-In Automator or Shortcuts, use the absolute path — those environments don't inherit your
-shell `PATH`.
+## What it changes
 
-## Performance on Apple Silicon
+| Patch | Change | Search → replace | Offset |
+|---|---|---|---|
+| ALLOW_TEARING | `je <fatal>` → `nop nop` | `44397C243C746D` → `44397C243C9090` | `0x20CF385` |
+| OPTIONS2 DepthBounds | `jne <cont>` → `jmp <cont>` | `44397C2440750D` → `44397C2440EB0D` | `0x20CF3F2` |
+| Force HDR *(optional)* | `is_hdr` `0` → `1` | `C645E000C745E8…` → `C645E001C745E8…` | `0xCF8AF5` |
 
-Getting it to boot is one problem. Getting it to run is another, and the fixes are not in
-the game's menu.
+Offsets are for v1.10.89.0; patterns are located by search and checked for uniqueness across
+the 117 MB image, and an ambiguous match is refused rather than guessed. Both feature
+variables still read `0` afterwards — only the aborts are removed, so the engine stays on its
+fallback paths instead of being told hardware exists that doesn't. Neither feature is needed
+to draw a frame; Horizon Zero Dawn Remastered runs the same engine and simply has fallbacks
+where DS2 has none.
 
-**Turn off CrossOver's High Resolution / Retina mode.** This is the single biggest factor,
-by a wide margin. With Retina mode on and `LogPixels` at 192 DPI, a window you set to
-1920×1200 is backed by 3840×2400 real pixels — **4× the pixel count you selected**. Every
-graphics setting in the game is rounding error next to that. It is also why the resolution
-dropdown won't offer anything below 1920.
+Only ALLOW_TEARING changed between builds — the compiler moved the fatal branch from
+`0F 84` (`je rel32`) to `74` (`je rel8`), and since the upstream tool aborts when any required
+pattern misses, the whole run failed over one of two patches.
 
-**Enable MSync** in the bottle settings. Wine's synchronization primitives are worth a large
-multiple in threaded games.
+**Full analysis** — addresses, disassembly, the second `OPTIONS2` query that is deliberately
+*not* patched, and the capstone/pefile method for re-deriving all of it after the next game
+update — is in the module docstring of [`patcher/ds2.py`](patcher/ds2.py).
 
-**Cap the framerate with VSync.** DS2's VSync dropdown offers refresh divisors, and the
-refresh-rate selector is often locked, so this is your cap:
+## Repo
 
-| VSync | Present interval | On a 120 Hz panel |
-|---|---|---|
-| On | every refresh | 120 fps |
-| Half | every 2nd | 60 fps |
-| Third | every 3rd | 40 fps |
-
-Half is usually right. Capping cuts sustained power draw, which matters because thermal
-throttling on a laptop chassis will take back whatever tuning gained you.
-
-**Use FSR, not DLSS.** If DLSS appears in the upscaler list, it is a detection artifact —
-CrossOver's DLSS option and `sl.interposer.dll` convince the game NVIDIA features exist.
-DLSS runs on Tensor cores, which Apple Silicon does not have, and there is no software
-fallback. FSR is vendor-agnostic compute and actually runs. The same applies to frame
-generation: the FidelityFX one can work, the NVIDIA one cannot.
-
-**Give the shader cache time.** D3DMetal's translated-pipeline cache is per-bottle, so it
-starts empty in a new bottle and after settings changes invalidate variants. The first
-fifteen minutes in any area are not representative. Change one thing at a time and let it
-settle before judging.
-
-**Use a dedicated bottle.** Don't share one across DirectX eras — a DX9-era profile and a
-DX12 title want different configurations, and CrossOver's per-app install profiles will
-fight each other. Bottle overhead is 1–3 GB against a 113 GB game, so the disk cost is
-noise.
-
-## Verifying
-
-Three bytes change. File size never does.
-
-```bash
-cmp -l DS2.exe.backup DS2.exe | wc -l      # 3, or 4 with HDR
-
-xxd -s 0x20CF385 -l 7 DS2.exe              # 4439 7c24 3c90 90
-xxd -s 0x20CF3F2 -l 7 DS2.exe              # 4439 7c24 40eb 0d
 ```
-
-| Offset | Before | After | Meaning |
-|---|---|---|---|
-| `0x20CF38A` | `74` | `90` | ALLOW_TEARING `je` → `nop` |
-| `0x20CF38B` | `6D` | `90` | ALLOW_TEARING `je` → `nop` |
-| `0x20CF3F7` | `75` | `EB` | OPTIONS2 `jne` → `jmp` |
-
-A fourth difference at `0xCF8AF8` means HDR was applied too.
-
-Reference unpatched v1.10.89.0: `117,851,944` bytes,
-sha256 `bf3d1c665545930bc850d8f5df486f7395885bb729d4fd408fdb03390de0765b`. The patcher
-reports a hash mismatch as a note, not an error — patterns are found by search, not by hash.
-
-## Errors on the way
-
-The order these appear in is itself diagnostic — each fix reveals the next failure, and
-two of them are red herrings that cost the most time.
-
-| # | Error | What it actually was | Fix |
-|---|---|---|---|
-| 1 | "VC++ 2015-2022 Redistributable required" | **Red herring.** The redistributable was installed and correct — verified in the registry. The dialog is what the game shows when early init fails for unrelated reasons | Nothing. Don't chase it |
-| 2 | "Error initializing rendering configuration" | Bottle was on the **DXVK** backend, which can't do DX12 here | Switch the bottle to **D3DMetal** |
-| 3 | "Shader Model 6.6 support not detected. Current GPU: Apple M5 Pro" | Progress — D3DMetal was now engaging and reporting the *real* GPU. SM 6.6 reporting falls short for this title | Resolved by the game update below |
-| 4 | "This game requires a CPU that supports F16C instructions" | Rosetta hides AVX/F16C CPUID flags from translated x86 apps | `ROSETTA_ADVERTISE_AVX=1` as a bottle environment variable |
-| 5 | (same F16C check) | The env var works, but the root cause is a CPU-detection bug affecting Nixxes ports generally, fixed in the game itself | Update the game to **v1.10.89.0**, which removes the need for the workaround |
-| 6 | "Error initializing rendering configuration" again, log showing CPU/GPU as `VirtualApple` | **Red herring, second time.** Same message, different cause: D3DMetal wasn't engaging at all on that launch path | Launch consistently via `cxstart` |
-| 7 | "Error initializing rendering configuration", everything else correct | The real one. Decima hard-requires two D3D12 features D3DMetal doesn't report | **This patch** |
-
-Errors 2, 6 and 7 are the same string with three different causes, which is what makes this
-hard to diagnose. If you see it, check the crash log for the adapter name before assuming
-you need the patch: `VirtualApple` means D3DMetal isn't engaging and the patch is not your
-problem.
-
-## Known issues
-
-| Issue | Cause |
-|---|---|
-| Adapter reported as `VirtualApple` | D3DMetal is not engaging on that launch path. Not a patch failure — see above |
-| Water does not render | D3DMetal shader translation bug, not the patch |
-| Sprites stretched into the sky | Same layer. Both are alpha/translucency paths — cycling **Translucency Quality** sometimes routes around it |
-| "recommend newer drivers (at least 595.79)" | Benign. That is an NVIDIA version string being checked against an adapter reporting as AMD. It gates nothing |
-| `Unsupported API: CheckFeatureSupport, unhandled support query 9` | A middleware DLL probing, not DS2 — the engine never queries feature 9. A log line, not an error |
-| Low FPS at startup | Shader cache warming |
-| Signature and PE checksum invalidated | Unavoidable when patching. Not enforced for user-mode executables under Wine |
-| Game updates revert the patch | Re-run the patcher. If patterns no longer match, see below |
-
-## Re-deriving patterns
-
-Patterns were found by static analysis, not a byte hunt, so the method repeats when the next
-update moves everything. Needs `capstone` and `pefile`.
-
-1. **Anchor on the assertion strings.** Decima's check macros embed the literal source
-   expression, so `.rdata` holds strings like
-   `mDXGIFactory->CheckFeatureSupport(DXGI_FEATURE_PRESENT_ALLOW_TEARING, &allow_tearing, sizeof(allow_tearing))`.
-2. **Find the code reference.** Scan `.text` for RIP-relative `LEA` (`REX + 8D`, modrm
-   mod=00 rm=101) resolving to those addresses. Each anchor has exactly one.
-3. **Get real function bounds** from `.pdata` — an array of 12-byte
-   `RUNTIME_FUNCTION { Begin, End, UnwindInfo }` RVAs. Binary-search for the entry containing
-   the xref. Skipping this means linear disassembly starts mid-instruction and desynchronizes.
-4. **Disassemble and locate the calls** by vtable offset — `+0xE0` on `IDXGIFactory5`,
-   `+0x68` on `ID3D12Device` — cross-checked against the feature id in `edx`.
-5. **Find the guard**: the `cmp dword ptr [rsp+disp], r15d` after the call and the jump
-   following it. Confirm the target reaches the teardown block, and that `r15` is really zero.
-6. **Check uniqueness** across the whole image before trusting the pattern.
-
-## History
+patcher/ds2.py                  # use this one — handles both builds
+patcher/legacy/ds2-1.0.49.0.py  # upstream v1.0.49.0-only patcher, reference
+```
 
 | Release | Change |
 |---|---|
-| v1.10.89.0 support | Re-derived ALLOW_TEARING pattern; single patcher auto-detects the build; added `--dry-run` and `--restore` |
-| Upstream v1 | Added the optional force-HDR patch |
+| v1.10.89.0 support | Re-derived ALLOW_TEARING pattern; one patcher auto-detects the build; `--dry-run` and `--restore` |
+| Upstream v1 | Optional force-HDR patch |
 | Upstream v0 | Fixed DS2 not launching |
 
-Nixxes may ship further patches to the game; each one can move the patterns again.
+Original fix and patcher by **David** ([davidakh](https://github.com/davidakh)); v1.10.89.0
+patterns re-derived for this fork. MIT.
 
-## Credits
-
-Original fix and patcher by **David** ([davidakh](https://github.com/davidakh)).
-v1.10.89.0 patterns re-derived for this fork.
-
-## Disclaimer
-
-This patch modifies a copyrighted executable for personal compatibility purposes. No game
-code or assets are distributed. You must own a legitimate copy of Death Stranding 2.
-
-## License
-
-MIT
+Modifies a copyrighted executable for personal compatibility only — no game code or assets
+are distributed, and you must own a legitimate copy of Death Stranding 2.
