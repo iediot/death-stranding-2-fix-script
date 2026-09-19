@@ -10,6 +10,8 @@
 
 </div>
 
+---
+
 DS2's Decima engine hard-requires two D3D12 features that Apple's D3DMetal doesn't report,
 and bails out of renderer init with no fallback. This patches out the two aborts — three
 bytes, nothing else. Game builds **v1.0.49.0** and **v1.10.89.0**, auto-detected.
