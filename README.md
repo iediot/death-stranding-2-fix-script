@@ -4,10 +4,6 @@
 
 **Death Stranding 2: On The Beach, running on Apple Silicon through CrossOver**
 
-![Python](https://img.shields.io/badge/Python-3-3776AB?style=flat-sqircle&logo=python&logoColor=white)
-![macOS](https://img.shields.io/badge/macOS-000000?style=flat-sqircle&logo=apple&logoColor=white)
-![License](https://img.shields.io/badge/License-MIT-green?style=flat-sqircle)
-
 </div>
 
 ---
