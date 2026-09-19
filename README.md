@@ -19,13 +19,27 @@ declines to initialize at all:
 Error initializing rendering configuration, check video card and drivers
 ```
 
-This is the *last* error you hit, not the first. Getting here means the bottle is already
-configured correctly — see [Bottle setup](#bottle-setup) for the three settings that have
-to be right before the patch is even the problem, and [Errors on the way](#errors-on-the-way)
-for the ones that look like this but aren't.
+**That message has at least three unrelated causes, and only the third one is what this
+patch fixes.** This is the trap: you fix a real problem, relaunch, and get the identical
+error back, so it looks like nothing you did worked.
 
-During init, the Decima engine asks the driver for two capabilities and treats both
-answers as pass-or-fail. Apple's D3DMetal translation layer says no to both:
+| The error means | When | Fix |
+|---|---|---|
+| The bottle is on **DXVK** | CrossOver's default backend. It does not do DX12 properly on Apple Silicon | Switch the bottle to D3DMetal |
+| **D3DMetal isn't engaging** | Launched from Finder or an app shortcut. The crash log names the adapter `VirtualApple` instead of your real GPU | Launch via `cxstart` with the backend set explicitly |
+| **The engine's own feature checks fail** | Everything above is correct and the log names your real GPU | This patch |
+
+Nor is it the first error you meet. Before the renderer even gets that far you can hit a
+false "VC++ Redistributable required" dialog, an F16C instruction complaint that is really
+Rosetta hiding CPUID flags, and a Shader Model 6.6 warning — none of which the patch
+touches. [Bottle setup](#bottle-setup) covers what has to be true first;
+[Errors on the way](#errors-on-the-way) walks the whole chain in order.
+
+### The part that needs patching
+
+Once the bottle is right, the failure is in the game. During init the Decima engine asks
+the driver for two capabilities and treats both answers as pass-or-fail. Apple's D3DMetal
+translation layer says no to both:
 
 | Capability | D3DMetal reports | Why it says no |
 |---|---|---|
