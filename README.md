@@ -19,6 +19,11 @@ declines to initialize at all:
 Error initializing rendering configuration, check video card and drivers
 ```
 
+This is the *last* error you hit, not the first. Getting here means the bottle is already
+configured correctly — see [Bottle setup](#bottle-setup) for the three settings that have
+to be right before the patch is even the problem, and [Errors on the way](#errors-on-the-way)
+for the ones that look like this but aren't.
+
 During init, the Decima engine asks the driver for two capabilities and treats both
 answers as pass-or-fail. Apple's D3DMetal translation layer says no to both:
 
@@ -66,6 +71,22 @@ patcher/
 └── legacy/
     └── ds2-1.0.49.0.py     # upstream v1.0.49.0-only patcher, kept for reference
 ```
+
+## Bottle setup
+
+The patch fixes one specific failure. It will not help if any of these are wrong, and each
+one produces its own misleading error first.
+
+| Setting | Value | Why |
+|---|---|---|
+| **Graphics backend** | `D3DMetal` | CrossOver defaults to **DXVK**, which does not do DX12 properly on Apple Silicon. On DXVK you get the renderer-init error and no patch will fix it |
+| **Environment variable** | `ROSETTA_ADVERTISE_AVX=1` | Rosetta hides the AVX/F16C CPUID bits from translated x86 apps by default |
+| **Game build** | `v1.10.89.0` or later | The pre-update builds carry a Nixxes-wide CPU-detection bug |
+
+Use a dedicated bottle, and launch the same way every time — see [Launching](#launching).
+D3DMetal does not always engage when the game is started from a Finder double-click or a
+CrossOver app shortcut, and when it doesn't, the adapter comes back as `VirtualApple` and
+you are back at the renderer-init error with a correctly patched executable.
 
 ## Usage
 
@@ -167,12 +188,21 @@ pattern misses, the whole run failed over one of two patches.
 
 ## Launching
 
-Right-click → Open With → CrossOver opens the GUI first. To go straight to the game:
+Right-click → Open With → CrossOver opens the GUI first, and Finder double-clicks and app
+shortcuts are the launch paths where D3DMetal sometimes fails to engage. Go straight to the
+game instead, and set the backend explicitly rather than trusting the bottle default:
 
 ```bash
+CX_GRAPHICS_BACKEND=d3dmetal D3DM_ENABLE_METALFX=1 DXMT_ENABLE_NVEXT=0 \
 /Applications/CrossOver.app/Contents/SharedSupport/CrossOver/bin/cxstart \
   --bottle YOUR_BOTTLE "C:\Program Files (x86)\DEATH STRANDING 2 ON THE BEACH\DS2.exe"
 ```
+
+| Variable | Effect |
+|---|---|
+| `CX_GRAPHICS_BACKEND=d3dmetal` | Force D3DMetal for this launch. The one that stops the adapter coming back as `VirtualApple` |
+| `D3DM_ENABLE_METALFX=1` | Allow MetalFX upscaling |
+| `DXMT_ENABLE_NVEXT=0` | Hide the NVIDIA extension interposer, so the game stops offering DLSS it cannot run |
 
 | Flag | Effect |
 |---|---|
@@ -249,10 +279,31 @@ Reference unpatched v1.10.89.0: `117,851,944` bytes,
 sha256 `bf3d1c665545930bc850d8f5df486f7395885bb729d4fd408fdb03390de0765b`. The patcher
 reports a hash mismatch as a note, not an error — patterns are found by search, not by hash.
 
+## Errors on the way
+
+The order these appear in is itself diagnostic — each fix reveals the next failure, and
+two of them are red herrings that cost the most time.
+
+| # | Error | What it actually was | Fix |
+|---|---|---|---|
+| 1 | "VC++ 2015-2022 Redistributable required" | **Red herring.** The redistributable was installed and correct — verified in the registry. The dialog is what the game shows when early init fails for unrelated reasons | Nothing. Don't chase it |
+| 2 | "Error initializing rendering configuration" | Bottle was on the **DXVK** backend, which can't do DX12 here | Switch the bottle to **D3DMetal** |
+| 3 | "Shader Model 6.6 support not detected. Current GPU: Apple M5 Pro" | Progress — D3DMetal was now engaging and reporting the *real* GPU. SM 6.6 reporting falls short for this title | Resolved by the game update below |
+| 4 | "This game requires a CPU that supports F16C instructions" | Rosetta hides AVX/F16C CPUID flags from translated x86 apps | `ROSETTA_ADVERTISE_AVX=1` as a bottle environment variable |
+| 5 | (same F16C check) | The env var works, but the root cause is a CPU-detection bug affecting Nixxes ports generally, fixed in the game itself | Update the game to **v1.10.89.0**, which removes the need for the workaround |
+| 6 | "Error initializing rendering configuration" again, log showing CPU/GPU as `VirtualApple` | **Red herring, second time.** Same message, different cause: D3DMetal wasn't engaging at all on that launch path | Launch consistently via `cxstart` |
+| 7 | "Error initializing rendering configuration", everything else correct | The real one. Decima hard-requires two D3D12 features D3DMetal doesn't report | **This patch** |
+
+Errors 2, 6 and 7 are the same string with three different causes, which is what makes this
+hard to diagnose. If you see it, check the crash log for the adapter name before assuming
+you need the patch: `VirtualApple` means D3DMetal isn't engaging and the patch is not your
+problem.
+
 ## Known issues
 
 | Issue | Cause |
 |---|---|
+| Adapter reported as `VirtualApple` | D3DMetal is not engaging on that launch path. Not a patch failure — see above |
 | Water does not render | D3DMetal shader translation bug, not the patch |
 | Sprites stretched into the sky | Same layer. Both are alpha/translucency paths — cycling **Translucency Quality** sometimes routes around it |
 | "recommend newer drivers (at least 595.79)" | Benign. That is an NVIDIA version string being checked against an adapter reporting as AMD. It gates nothing |
