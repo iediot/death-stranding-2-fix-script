@@ -1,7 +1,8 @@
+<div align="center">
 # DS2 Mac Fix
 
 **Death Stranding 2: On The Beach, running on Apple Silicon through CrossOver**
-
+<div>
 ---
 
 DS2's Decima engine hard-requires two D3D12 features that Apple's D3DMetal doesn't report,
