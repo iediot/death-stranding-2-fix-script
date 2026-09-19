@@ -1,10 +1,6 @@
-<div align="center">
-
 # DS2 Mac Fix
 
 **Death Stranding 2: On The Beach, running on Apple Silicon through CrossOver**
-
-</div>
 
 ---
 
