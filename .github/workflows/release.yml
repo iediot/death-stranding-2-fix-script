@@ -31,7 +31,7 @@ jobs:
       - name: Byte-compile patchers
         run: |
           set -euo pipefail
-          for f in "Death Stranding 2 On the Beach - Mac Fix/Patcher/Version "*/ds2.py; do
+          for f in patcher/ds2.py patcher/legacy/*.py; do
             echo "compiling $f"
             python3 -m py_compile "$f"
           done
@@ -40,7 +40,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 .github/scripts/validate_patches.py \
-            "Death Stranding 2 On the Beach - Mac Fix/Patcher/Version "*/ds2.py
+            patcher/ds2.py patcher/legacy/*.py
 
       - name: Build archive
         id: build
@@ -55,12 +55,11 @@ jobs:
 
           find . -name '.DS_Store' -delete
           find . -name '__pycache__' -type d -prune -exec rm -rf {} +
-          rm -rf __MACOSX
 
           zip -r "$NAME" \
-            "Death Stranding 2 On the Beach - Mac Fix" \
+            patcher \
             README.md \
-            -x '*.DS_Store' '__MACOSX/*' '*__pycache__/*' '*.pyc' '*ds2_disasm.txt'
+            -x '*.DS_Store' '*__pycache__/*' '*.pyc' '*ds2_disasm.txt'
 
           echo "name=$NAME" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG"   >> "$GITHUB_OUTPUT"

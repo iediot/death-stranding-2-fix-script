@@ -51,21 +51,28 @@ HDR-capable displays. Skip it unless your display is actually HDR.
 
 ## Supported builds
 
-| Game build | Patcher | Notes |
-|---|---|---|
-| v1.0.49.0 | `Patcher/Version 1/ds2.py` | original patterns |
-| v1.10.89.0 | `Patcher/Version 2/ds2.py` | re-derived |
+`patcher/ds2.py` is the only script you need. It handles both known builds — it reads
+`FileVersion` from the PE version resource, picks the matching pattern set, and falls back
+to byte-signature detection if the resource is unreadable.
 
-**Use Version 2.** It handles both builds — it reads `FileVersion` from the PE version
-resource, picks the matching pattern set, and falls back to byte-signature detection if
-the resource is unreadable. Version 1 is kept for reference.
+| Game build | Status | Notes |
+|---|---|---|
+| v1.0.49.0 | supported | original upstream patterns |
+| v1.10.89.0 | supported | re-derived for this fork |
+
+```
+patcher/
+├── ds2.py                  # use this one
+└── legacy/
+    └── ds2-1.0.49.0.py     # upstream v1.0.49.0-only patcher, kept for reference
+```
 
 ## Usage
 
 ```bash
-python3 ds2.py --dry-run "/path/to/DS2.exe"    # report only, writes nothing
-python3 ds2.py "/path/to/DS2.exe"              # patch
-python3 ds2.py --restore "/path/to/DS2.exe"    # undo
+python3 patcher/ds2.py --dry-run "/path/to/DS2.exe"    # report only, writes nothing
+python3 patcher/ds2.py "/path/to/DS2.exe"              # patch
+python3 patcher/ds2.py --restore "/path/to/DS2.exe"    # undo
 ```
 
 Standard library only — nothing to install.
@@ -272,6 +279,16 @@ update moves everything. Needs `capstone` and `pefile`.
 5. **Find the guard**: the `cmp dword ptr [rsp+disp], r15d` after the call and the jump
    following it. Confirm the target reaches the teardown block, and that `r15` is really zero.
 6. **Check uniqueness** across the whole image before trusting the pattern.
+
+## History
+
+| Release | Change |
+|---|---|
+| v1.10.89.0 support | Re-derived ALLOW_TEARING pattern; single patcher auto-detects the build; added `--dry-run` and `--restore` |
+| Upstream v1 | Added the optional force-HDR patch |
+| Upstream v0 | Fixed DS2 not launching |
+
+Nixxes may ship further patches to the game; each one can move the patterns again.
 
 ## Credits
 
